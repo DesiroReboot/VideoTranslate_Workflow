@@ -23,6 +23,11 @@ from pathlib import Path
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
 
+# 添加VideoTranslate_Windows目录到路径
+_windows_path = _project_root.parent / 'VideoTranslate_Windows'
+if _windows_path.exists() and str(_windows_path) not in sys.path:
+    sys.path.insert(0, str(_windows_path))
+
 from .api_config import (
     API_HOST, API_PORT, API_BASE_URL, CORS_ORIGINS, 
     LOG_LEVEL, MAX_CONCURRENT_TASKS
@@ -47,7 +52,19 @@ from ..common.stop_flag import StopFlag
 from ..cleanup_temp import cleanup_temp_files
 
 # 导入UI配置（用于语言映射）
-from VideoTranslate_Windows.ui_config import DISPLAY_TO_CODE_MAP, LANGUAGE_CODE_MAP, ASR_DEFAULT_THRESHOLD, ASR_DEFAULT_COEFFICIENT
+import sys
+from pathlib import Path
+_windows_path = Path(__file__).parent.parent.parent / 'VideoTranslate_Windows'
+if str(_windows_path) not in sys.path:
+    sys.path.insert(0, str(_windows_path))
+try:
+    from ui_config import DISPLAY_TO_CODE_MAP, LANGUAGE_CODE_MAP, ASR_DEFAULT_THRESHOLD, ASR_DEFAULT_COEFFICIENT  # type: ignore[import] # noqa: E402
+except ImportError:
+    # Fallback defaults if ui_config is not available
+    DISPLAY_TO_CODE_MAP = {"中文": "zh", "英文": "en", "日文": "ja", "韩文": "ko", "法文": "fr", "德文": "de", "西班牙文": "es", "俄文": "ru"}
+    LANGUAGE_CODE_MAP = {"zh": "Chinese", "en": "English", "ja": "Japanese", "ko": "Korean", "fr": "French", "de": "German", "es": "Spanish", "ru": "Russian"}
+    ASR_DEFAULT_THRESHOLD = 0.95
+    ASR_DEFAULT_COEFFICIENT = 1.0
 
 # 配置日志
 import logging
@@ -284,7 +301,9 @@ def run_translation_task(
         confirmed_asr_text = original_text
         with task_lock:
             if task_id in tasks and tasks[task_id].asr_confirmed:
-                confirmed_asr_text = tasks[task_id].asr_data.get("confirmed_text", original_text)
+                task_data = tasks[task_id]
+                if task_data.asr_data is not None:
+                    confirmed_asr_text = task_data.asr_data.get("confirmed_text", original_text)
 
         display_text = confirmed_asr_text[:50] + "..." if len(confirmed_asr_text) > 50 else confirmed_asr_text
         log_callback(f"✓ ASR结果已确认: {display_text}")
@@ -343,7 +362,7 @@ def run_translation_task(
         confirmed_translation = translated_text
         with task_lock:
             if task_id in tasks and tasks[task_id].translation_confirmed:
-                confirmed_translation = tasks[task_id].confirmed_translation
+                confirmed_translation = tasks[task_id].translation_text or translated_text
 
         display_text = confirmed_translation[:50] + "..." if len(confirmed_translation) > 50 else confirmed_translation
         log_callback(f"✓ 翻译结果已确认: {display_text}")
@@ -353,7 +372,7 @@ def run_translation_task(
         log_callback("提示: 正在生成新的配音...")
 
         ai_services = AIServices(mode.value)
-        new_audio = ai_services.text_to_speech(confirmed_translation, language=target_language)
+        new_audio = ai_services.text_to_speech(confirmed_translation, language=target_language)  # type: ignore[attr-defined]
         log_callback(f"✓ 语音合成完成: {new_audio}")
 
         asyncio.run_coroutine_threadsafe(
@@ -482,8 +501,10 @@ async def confirm_asr(request: ConfirmAsrRequest):
         task = tasks[request.task_id]
         if task.asr_confirmed:
             raise HTTPException(status_code=400, detail="ASR已确认")
-        
+
         # 更新确认的文本
+        if task.asr_data is None:
+            task.asr_data = {}
         task.asr_data["confirmed_text"] = request.confirmed_text
         task.asr_confirmed = True
     
@@ -500,9 +521,9 @@ async def confirm_translation(request: ConfirmTranslationRequest):
         task = tasks[request.task_id]
         if task.translation_confirmed:
             raise HTTPException(status_code=400, detail="翻译已确认")
-        
+
         # 更新确认的文本
-        task.confirmed_translation = request.confirmed_text
+        task.translation_text = request.confirmed_text
         task.translation_confirmed = True
     
     return {"success": True, "message": "翻译结果已确认"}
