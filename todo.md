@@ -111,7 +111,7 @@ python main.py "video.mp4" English --style humorous --config ./config.json -v
 ### 状态: ✅ 已完成
 - 实现时间: 2026-01-12
 - 实现文件: config_wizard.py
-- 实现内容: ConfigWizard类、API密钥检测、连接测试、配置文件生成
+- 实现内容: ConfigWizard类、API密钥检测、连接测试、配置文件生成、交互式向导
 
 ---
 
@@ -131,7 +131,7 @@ python main.py "video.mp4" English --style humorous --config ./config.json -v
 ### 状态: ✅ 已完成
 - 实现时间: 2026-01-12
 - 实现文件: tests/test_workflow.py
-- 实现内容: CLI参数测试、进度显示测试、配置向导测试、Mock网络测试、错误恢复测试
+- 实现内容: CLI参数测试、进度显示测试、配置向导测试、Mock网络测试、错误恢复测试、输入验证测试、输出处理测试、性能基准测试
 
 ---
 

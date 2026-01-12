@@ -123,6 +123,10 @@ def normalize_language(language: str) -> str:
     # 去除首尾空格
     language = language.strip()
 
+    # 空字符串返回默认值
+    if not language:
+        return "English"
+
     # 常见语言的别名映射（小写）
     language_map = {
         # 英语
