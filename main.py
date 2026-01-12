@@ -13,6 +13,7 @@
 import sys
 import time
 from pathlib import Path
+import argparse
 
 # 配置标准输出使用 UTF-8 编码（解决 Windows GBK 编码问题）
 if sys.platform == "win32":
@@ -47,6 +48,7 @@ from speech_to_text import SpeechToText
 from translate_text import DistributedTranslation
 from cleanup_temp import cleanup_temp_files
 from common.security import InputValidator, SecurityError, RegexValidator
+from progress import TranslationProgress
 
 # 翻译风格常量定义
 VALID_TRANSLATION_STYLES = [
@@ -193,12 +195,16 @@ def normalize_language(language: str) -> str:
 class VideoTranslator:
     """视频翻译器主类"""
 
-    def __init__(self, translation_style: str = "auto"):
+    def __init__(self, translation_style: str = "auto", verbose: bool = False):
         """初始化视频翻译器
 
         Args:
             translation_style: 翻译风格，可选值：humorous, serious, educational, entertainment, news, auto
+            verbose: 是否显示详细输出
         """
+        # 初始化进度显示器
+        self.progress = TranslationProgress(verbose=verbose)
+
         # 标准化翻译风格（大小写兼容）
         normalized_style = normalize_style(translation_style)
         if normalized_style != translation_style:
@@ -253,23 +259,29 @@ class VideoTranslator:
 
         try:
             # 步骤1: 准备视频文件
-            print("\n[步骤 1/6] 准备视频文件...")
+            self.progress.print_stage_header(1, "准备视频文件...")
             video_path, bv_id = VideoDownloader.prepare_video(url_or_path)
+            self.progress.update_stage_progress(1, 100)
             if bv_id:
-                print(f"✓ 视频就绪: {video_path} (BV号: {bv_id})")
+                self.progress.print_success(f"视频就绪: {video_path} (BV号: {bv_id})")
             else:
-                print(f"✓ 视频就绪: {video_path}")
+                self.progress.print_success(f"视频就绪: {video_path}")
+            self.progress.close_stage(1)
 
             # 步骤2: 提取音频
-            print("\n[步骤 2/6] 提取原始音频...")
+            self.progress.print_stage_header(2, "提取原始音频...")
             original_audio = AudioProcessor.extract_audio(video_path)
-            print(f"✓ 音频提取完成: {original_audio}")
+            self.progress.update_stage_progress(2, 100)
+            self.progress.print_success(f"音频提取完成: {original_audio}")
+            self.progress.close_stage(2)
 
             # 步骤3: 语音识别
-            print("\n[步骤 3/6] 语音识别(ASR)...")
-            print("提示: 这可能需要几分钟,请耐心等待...")
+            self.progress.print_stage_header(3, "语音识别(ASR)...")
+            self.progress.print_message("提示: 这可能需要几分钟,请耐心等待...")
             original_text = self.stt.recognize(original_audio)
-            print(f"✓ 识别完成,共 {len(original_text)} 字符")
+            self.progress.update_stage_progress(3, 100)
+            self.progress.print_success(f"识别完成,共 {len(original_text)} 字符")
+            self.progress.close_stage(3)
 
             # 保存原文
             if bv_id:
@@ -278,27 +290,29 @@ class VideoTranslator:
                 video_name = Path(video_path).stem
                 original_text_file = OUTPUT_DIR / f"{video_name}_original.txt"
             original_text_file.write_text(original_text, encoding="utf-8")
-            print(f"  原文已保存: {original_text_file}")
+            self.progress.print_message(f"  原文已保存: {original_text_file}", verbose_only=True)
 
             # 步骤4: 文本翻译
-            print(f"\n[步骤 4/6] 翻译文本 (目标语言: {target_language})...")
+            self.progress.print_stage_header(4, f"翻译文本 (目标语言: {target_language})...")
 
             # 使用分布式翻译（带质量评价和重试）
             translated_text, translation_score = self.translator.translate(
                 original_text, target_language
             )
 
-            print(f"✓ 翻译完成,共 {len(translated_text)} 字符")
+            self.progress.update_stage_progress(4, 100)
+            self.progress.print_success(f"翻译完成,共 {len(translated_text)} 字符")
+            self.progress.close_stage(4)
 
             # 如果有评分结果，显示评分信息
             if translation_score:
-                print(f"✓ 翻译质量评分: {translation_score.overall_score:.1f}/100")
+                self.progress.print_success(f"翻译质量评分: {translation_score.overall_score:.1f}/100")
                 if translation_score.suggestions:
-                    print("✓ 改进建议:")
+                    self.progress.print_message("改进建议:")
                     for i, suggestion in enumerate(
                         translation_score.suggestions[:3], 1
                     ):  # 只显示前3条建议
-                        print(f"  {i}. {suggestion}")
+                        self.progress.print_message(f"  {i}. {suggestion}", verbose_only=True)
 
             # 保存译文
             if bv_id:
@@ -309,7 +323,7 @@ class VideoTranslator:
                     OUTPUT_DIR / f"{video_name}_translated_{target_language}.txt"
                 )
             translated_text_file.write_text(translated_text, encoding="utf-8")
-            print(f"  译文已保存: {translated_text_file}")
+            self.progress.print_message(f"  译文已保存: {translated_text_file}", verbose_only=True)
 
             # 如果有评分结果，保存评分报告
             if translation_score:
@@ -354,28 +368,32 @@ class VideoTranslator:
                 # 保存评分报告
                 with open(score_report_file, "w", encoding="utf-8") as f:
                     json.dump(score_report, f, ensure_ascii=False, indent=2)
-                print(f"  评分报告已保存: {score_report_file}")
+                self.progress.print_message(f"  评分报告已保存: {score_report_file}", verbose_only=True)
 
             # 步骤5: 语音合成
-            print("\n[步骤 5/6] 语音合成(TTS)...")
-            print("提示: 正在生成新的配音...")
+            self.progress.print_stage_header(5, "语音合成(TTS)...")
+            self.progress.print_message("提示: 正在生成新的配音...")
             new_audio = self.ai_services.text_to_speech(
                 translated_text, language=target_language
             )
-            print(f"✓ 语音合成完成: {new_audio}")
+            self.progress.update_stage_progress(5, 100)
+            self.progress.print_success(f"语音合成完成: {new_audio}")
+            self.progress.close_stage(5)
 
             # 步骤6: 替换音频
-            print("\n[步骤 6/6] 合成最终视频...")
-            print("提示: 正在合成视频,这可能需要几分钟...")
+            self.progress.print_stage_header(6, "合成最终视频...")
+            self.progress.print_message("提示: 正在合成视频,这可能需要几分钟...")
             output_video = AudioProcessor.replace_audio(
                 video_path, new_audio, bv_id=bv_id, target_language=target_language
             )
-            print("✓ 视频合成完成!")
+            self.progress.update_stage_progress(6, 100)
+            self.progress.print_success("视频合成完成!")
+            self.progress.close_stage(6)
 
             # 完成
             elapsed_time = time.time() - start_time
             print("\n" + "=" * 60)
-            print("✓ 翻译完成!")
+            self.progress.print_success("翻译完成!")
             print(f"  总耗时: {elapsed_time:.1f} 秒 ({elapsed_time / 60:.1f} 分钟)")
             print(f"  输出视频: {output_video}")
             print(f"  原文文本: {original_text_file}")
@@ -387,34 +405,37 @@ class VideoTranslator:
             try:
                 cleanup_temp_files(keep_video_path=str(output_video))
             except Exception as e:
-                print(f"警告: 临时文件清理失败: {e}")
+                self.progress.print_warning(f"临时文件清理失败: {e}")
 
             return output_video
 
         except Exception as e:
-            print(f"\n✗ 错误: {str(e)}")
+            self.progress.print_error(str(e))
             raise
 
 
 def main():
     """主函数 - 命令行接口"""
-
-    # 解析命令行参数
-    if len(sys.argv) < 3:
-        print("""
-使用方法:
-    python main.py <视频URL或路径> <目标语言> [翻译风格]
-
+    parser = argparse.ArgumentParser(
+        description="视频翻译系统 - 支持B站视频URL或本地视频文件翻译",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
 示例:
     # 翻译B站视频为英文（自动风格）
     python main.py "https://www.bilibili.com/video/BVxxxxxxxxx" English
     
     # 翻译本地视频为日文（幽默风格）
-    python main.py "video.mp4" Japanese humorous
+    python main.py "video.mp4" Japanese --style humorous
     
     # 翻译教育视频为英文（教育风格）
-    python main.py "education_video.mp4" English educational
+    python main.py "education_video.mp4" English --style educational --verbose
     
+    # 查看帮助信息
+    python main.py --help
+    
+    # 查看版本信息
+    python main.py --version
+
 支持的语言:
     Chinese, English, Japanese, Korean, Spanish, French, 
     German, Russian, Italian, Portuguese 等92种语言
@@ -428,24 +449,60 @@ def main():
     auto        - 自动检测，根据内容自动选择最适合的风格（默认）
     
 注意: 源语言将自动识别，无需手动指定
-        """)
-        sys.exit(1)
+        """
+    )
 
-    url_or_path = sys.argv[1]
-    target_language = sys.argv[2]
-    source_language = "auto"  # 源语言固定为自动识别
-    translation_style = sys.argv[3] if len(sys.argv) > 3 else "auto"
+    parser.add_argument(
+        "url_or_path",
+        help="B站视频URL或本地视频文件路径"
+    )
+    
+    parser.add_argument(
+        "target_language",
+        help="目标语言 (如: English, Japanese, Korean等)"
+    )
+    
+    parser.add_argument(
+        "--style", "-s",
+        choices=["humorous", "serious", "educational", "entertainment", "news", "auto"],
+        default="auto",
+        help="翻译风格 (默认: auto)"
+    )
+    
+    parser.add_argument(
+        "--source-language",
+        default="auto",
+        help="源语言 (默认: auto - 自动识别)"
+    )
+    
+    parser.add_argument(
+        "--config", "-c",
+        help="配置文件路径"
+    )
+    
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="显示详细输出"
+    )
+    
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s 1.1"
+    )
+
+    args = parser.parse_args()
+
+    url_or_path = args.url_or_path
+    target_language = args.target_language
+    source_language = args.source_language
+    translation_style = args.style
+    verbose = args.verbose
 
     # 使用InputValidator进行安全验证
     try:
-        # 1. 参数数量验证
-        if len(sys.argv) < 3 or len(sys.argv) > 4:
-            raise ValueError(
-                "参数数量错误。用法: python main.py <URL/文件路径> <目标语言> [翻译风格]\n"
-                '示例: python main.py "https://www.bilibili.com/video/BVxxx" Japanese serious'
-            )
-
-        # 2. 编码格式验证 - 确保参数是有效的UTF-8字符串
+        # 1. 编码格式验证 - 确保参数是有效的UTF-8字符串
         try:
             url_or_path.encode("utf-8")
             target_language.encode("utf-8")
@@ -453,23 +510,23 @@ def main():
         except UnicodeEncodeError:
             raise ValueError("参数包含无效的字符编码，请使用UTF-8编码")
 
-        # 3. 特殊字符过滤 - 防止命令注入
+        # 2. 特殊字符过滤 - 防止命令注入
         dangerous_chars = ["|", "&", ";", "$", "`", "(", ")", "<", ">", '"', "'"]
         for char in dangerous_chars:
             if char in url_or_path:
                 raise ValueError(f"URL/路径包含危险字符: {char}")
 
-        # 4. URL/路径长度验证
+        # 3. URL/路径长度验证
         url_or_path = InputValidator.validate_url_length(url_or_path, max_length=1000)
 
-        # 5. 语言参数标准化（大小写兼容）
+        # 4. 语言参数标准化（大小写兼容）
         target_language = normalize_language(target_language)
-        # source_language 固定为 "auto"，无需验证
+        source_language = normalize_language(source_language)
 
-        # 6. 翻译风格参数标准化（大小写兼容）
+        # 5. 翻译风格参数标准化（大小写兼容）
         translation_style = normalize_style(translation_style)
 
-        # 7. 正则表达式输入长度验证（防止ReDoS）
+        # 6. 正则表达式输入长度验证（防止ReDoS）
         RegexValidator.validate_input_length_for_regex(url_or_path, max_length=500)
 
     except ValueError as e:
@@ -481,7 +538,7 @@ def main():
 
     try:
         # 创建翻译器并执行
-        translator = VideoTranslator(translation_style)
+        translator = VideoTranslator(translation_style, verbose=verbose)
         output_video = translator.translate_video(
             url_or_path, target_language, source_language
         )

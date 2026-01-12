@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # 视频翻译主服务
+  video-translate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video-translate
+    env_file:
+      - .env
+    volumes:
+      # 挂载输出目录
+      - ./output:/app/output
+      # 挂载临时文件目录
+      - ./temp:/app/temp
+      # 挂载日志目录
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+    restart: unless-stopped
+    # 如需GPU加速，取消以下注释
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # 视频翻译服务（交互式模式）
+  video-translate-interactive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video-translate-interactive
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+    stdin_open: true
+    tty: true
+    command: python main.py
+    profiles:
+      - interactive
+
+  # 批量翻译服务
+  video-translate-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video-translate-batch
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+      # 挂载批量任务配置
+      - ./batch_tasks:/app/batch_tasks:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+    command: python batch_process.py
+    profiles:
+      - batch
+
+volumes:
+  # 定义持久化卷
+  output:
+  temp:
+  logs:
